@@ -159,12 +159,3 @@ k8s-logging-stack/
 * [Grafana Alloy Documentation](https://grafana.com/docs/alloy/latest/)
 * [Loki Documentation](https://grafana.com/docs/loki/latest/)
 * [Grafana Documentation](https://grafana.com/docs/grafana/latest/)
-
-```
-
----
-
-If you want, I can also **generate the full repo structure with all Helm values and example manifests** so you can **push directly to GitHub and deploy everything immediately**.  
-
-Do you want me to do that next?
-```

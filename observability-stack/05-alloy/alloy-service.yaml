@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: alloy
+  namespace: observability
+  labels:
+    app: alloy
+spec:
+  type: ClusterIP
+  ports:
+  - port: 12345
+    targetPort: 12345
+    protocol: TCP
+    name: http-metrics
+  - port: 4317
+    targetPort: 4317
+    protocol: TCP
+    name: otlp-grpc
+  - port: 4318
+    targetPort: 4318
+    protocol: TCP
+    name: otlp-http
+  selector:
+    app: alloy
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alloy-cluster
+  namespace: observability
+  labels:
+    app: alloy
+spec:
+  clusterIP: None
+  ports:
+  - port: 12345
+    targetPort: 12345
+    protocol: TCP
+    name: http-metrics
+  selector:
+    app: alloy

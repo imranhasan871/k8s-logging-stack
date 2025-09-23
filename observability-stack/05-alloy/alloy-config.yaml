@@ -1,0 +1,205 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+  namespace: observability
+data:
+  config.alloy: |
+    // Logging configuration
+    logging {
+      level  = "info"
+      format = "logfmt"
+    }
+    
+    // Kubernetes service discovery for logs
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
+    
+    // Process discovered pods for log collection
+    discovery.relabel "logs" {
+      targets = discovery.kubernetes.pods.targets
+      
+      // Keep only running pods
+      rule {
+        source_labels = ["__meta_kubernetes_pod_phase"]
+        action        = "keep"
+        regex         = "Running"
+      }
+      
+      // Drop system namespaces (optional)
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        action        = "drop"
+        regex         = "(kube-system|kube-public|kube-node-lease)"
+      }
+      
+      // Set job label
+      rule {
+        source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_name"]
+        target_label  = "job"
+        separator     = "/"
+        action        = "replace"
+      }
+      
+      // Set namespace label
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+        action        = "replace"
+      }
+      
+      // Set pod label
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+        action        = "replace"
+      }
+      
+      // Set container label
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label  = "container"
+        action        = "replace"
+      }
+      
+      // Set node label
+      rule {
+        source_labels = ["__meta_kubernetes_pod_node_name"]
+        target_label  = "node"
+        action        = "replace"
+      }
+      
+      // Set filename based on container log path
+      rule {
+        source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_container_name"]
+        target_label  = "__path__"
+        separator     = "/"
+        action        = "replace"
+        replacement   = "/var/log/pods/*$1*/*$2*/*.log"
+      }
+    }
+    
+    // Log file discovery and reading
+    loki.source.file "pods" {
+      targets    = discovery.relabel.logs.output
+      forward_to = [loki.process.logs.receiver]
+    }
+    
+    // Log processing pipeline
+    loki.process "logs" {
+      forward_to = [loki.write.loki.receiver]
+      
+      stage.cri {}
+      
+      // Parse JSON logs
+      stage.json {
+        expressions = {
+          level = "level",
+          msg   = "msg",
+          time  = "time",
+        }
+      }
+      
+      // Extract log level
+      stage.labels {
+        values = {
+          level = "level",
+        }
+      }
+      
+      // Drop empty log levels
+      stage.drop {
+        source      = "level"
+        expression  = "^$"
+      }
+      
+      // Rate limiting
+      stage.limit {
+        rate = 1000
+      }
+    }
+    
+    // Loki write configuration
+    loki.write "loki" {
+      endpoint {
+        url = "http://loki.observability.svc.cluster.local:3100/loki/api/v1/push"
+        
+        // Retry configuration
+        max_backoff_period = "5m"
+        max_retries        = 10
+        min_backoff_period = "500ms"
+      }
+      
+      external_labels = {
+        cluster = "production",
+      }
+    }
+    
+    // Prometheus metrics discovery
+    discovery.kubernetes "services" {
+      role = "service"
+    }
+    
+    discovery.kubernetes "endpoints" {
+      role = "endpoints"
+    }
+    
+    // Process services for metrics scraping
+    discovery.relabel "metrics" {
+      targets = discovery.kubernetes.endpoints.targets
+      
+      // Keep only services with prometheus.io/scrape annotation
+      rule {
+        source_labels = ["__meta_kubernetes_service_annotation_prometheus_io_scrape"]
+        action        = "keep"
+        regex         = "true"
+      }
+      
+      // Use custom metrics path if specified
+      rule {
+        source_labels = ["__meta_kubernetes_service_annotation_prometheus_io_path"]
+        action        = "replace"
+        target_label  = "__metrics_path__"
+        regex         = "(.+)"
+      }
+      
+      // Use custom port if specified
+      rule {
+        source_labels = ["__address__", "__meta_kubernetes_service_annotation_prometheus_io_port"]
+        action        = "replace"
+        regex         = "([^:]+)(?::\\d+)?;(\\d+)"
+        replacement   = "$1:$2"
+        target_label  = "__address__"
+      }
+      
+      // Set job label
+      rule {
+        source_labels = ["__meta_kubernetes_service_name"]
+        target_label  = "job"
+        action        = "replace"
+      }
+      
+      // Set namespace label
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+        action        = "replace"
+      }
+      
+      // Set service label
+      rule {
+        source_labels = ["__meta_kubernetes_service_name"]
+        target_label  = "service"
+        action        = "replace"
+      }
+    }
+    
+    // Alloy self-monitoring
+    prometheus.exporter.self "alloy" {}
+    
+    prometheus.scrape "self" {
+      targets    = prometheus.exporter.self.alloy.targets
+      forward_to = [loki.write.loki.receiver]
+      job_name   = "alloy"
+    }

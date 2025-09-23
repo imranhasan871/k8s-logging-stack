@@ -1,0 +1,115 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: alloy
+  namespace: observability
+  labels:
+    app: alloy
+spec:
+  selector:
+    matchLabels:
+      app: alloy
+  template:
+    metadata:
+      labels:
+        app: alloy
+    spec:
+      serviceAccountName: observability-stack
+      hostNetwork: true
+      hostPID: true
+      securityContext:
+        runAsUser: 0
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: alloy
+        image: grafana/alloy:v1.0.0
+        args:
+        - run
+        - /etc/alloy/config.alloy
+        - --storage.path=/tmp/alloy
+        - --server.http.listen-addr=0.0.0.0:12345
+        - --cluster.enabled=true
+        - --cluster.join-addresses=alloy-cluster:12345
+        - --disable-reporting
+        env:
+        - name: HOSTNAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: ALLOY_DEPLOY_MODE
+          value: "helm"
+        ports:
+        - containerPort: 12345
+          name: http-metrics
+          protocol: TCP
+        - containerPort: 4317
+          name: otlp-grpc
+          protocol: TCP
+        - containerPort: 4318
+          name: otlp-http
+          protocol: TCP
+        - containerPort: 14268
+          name: jaeger-thrift
+          protocol: TCP
+        - containerPort: 9411
+          name: zipkin
+          protocol: TCP
+        volumeMounts:
+        - name: config
+          mountPath: /etc/alloy
+        - name: storage
+          mountPath: /tmp/alloy
+        - name: varlog
+          mountPath: /var/log
+          readOnly: true
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+        - name: etcmachineinfo
+          mountPath: /etc/machine-info
+          readOnly: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: 12345
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 12345
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+      volumes:
+      - name: config
+        configMap:
+          name: alloy-config
+      - name: storage
+        emptyDir: {}
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+      - name: etcmachineinfo
+        hostPath:
+          path: /etc/machine-info

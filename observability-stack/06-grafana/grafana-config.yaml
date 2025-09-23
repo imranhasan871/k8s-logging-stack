@@ -1,0 +1,91 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-config
+  namespace: observability
+data:
+  grafana.ini: |
+    [analytics]
+    check_for_updates = true
+    
+    [grafana_net]
+    url = https://grafana.net
+    
+    [log]
+    mode = console
+    level = info
+    
+    [paths]
+    data = /var/lib/grafana/
+    logs = /var/log/grafana
+    plugins = /var/lib/grafana/plugins
+    provisioning = /etc/grafana/provisioning
+    
+    [server]
+    protocol = http
+    http_port = 3000
+    domain = localhost
+    enforce_domain = false
+    root_url = %(protocol)s://%(domain)s:%(http_port)s/
+    router_logging = false
+    static_root_path = public
+    enable_gzip = false
+    cert_file =
+    cert_key =
+    socket = /tmp/grafana.sock
+    
+    [security]
+    admin_user = admin
+    admin_password = admin123
+    secret_key = SW2YcwTIb9zpOOhoPsMm
+    login_remember_days = 7
+    cookie_username = grafana_user
+    cookie_remember_name = grafana_remember
+    disable_gravatar = false
+    
+    [users]
+    allow_sign_up = false
+    allow_org_create = false
+    auto_assign_org = true
+    auto_assign_org_role = Viewer
+    
+    [auth.anonymous]
+    enabled = false
+    
+    [auth.basic]
+    enabled = true
+    
+    [database]
+    type = sqlite3
+    path = grafana.db
+    
+    [session]
+    provider = file
+    
+    [dataproxy]
+    logging = false
+    
+    [snapshots]
+    external_enabled = true
+    external_snapshot_url = https://snapshots-origin.raintank.io
+    external_snapshot_name = Publish to snapshot.raintank.io
+    
+    [dashboards]
+    versions_to_keep = 20
+    
+    [alerting]
+    enabled = true
+    execute_alerts = true
+    
+    [metrics]
+    enabled = true
+    interval_seconds = 10
+    
+    [tracing.jaeger]
+    address = localhost:6831
+    always_included_tag = tag1:value1
+    sampler_type = const
+    sampler_param = 1
+    
+    [explore]
+    enabled = true

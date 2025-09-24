@@ -1,0 +1,163 @@
+# ---------------- Alloy RBAC ----------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alloy
+  namespace: observability
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alloy
+rules:
+  - apiGroups: [""]
+    resources: 
+      - nodes
+      - nodes/proxy
+      - services
+      - endpoints
+      - pods
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alloy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alloy
+subjects:
+  - kind: ServiceAccount
+    name: alloy
+    namespace: observability
+
+---
+# ---------------- Alloy Config ----------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+  namespace: observability
+data:
+  config.alloy: |
+    // Loki endpoint configuration
+    loki.write "default" {
+      endpoint {
+        url = "http://loki:3100/loki/api/v1/push"
+      }
+    }
+    
+    // Simple direct file discovery - matches your log structure exactly
+    local.file_match "pod_logs" {
+      path_targets = [
+        {
+          __path__ = "/var/log/pods/*/*/*/*.log",
+        },
+      ]
+    }
+    
+    // Read the discovered log files
+    loki.source.file "pod_logs" {
+      targets = local.file_match.pod_logs.targets
+      forward_to = [loki.process.pod_logs.receiver]
+    }
+    
+    // Process and label the logs
+    loki.process "pod_logs" {
+      forward_to = [loki.write.default.receiver]
+      
+      // Extract metadata from file path
+      // Path format: /var/log/pods/namespace_podname_uid/container/0.log
+      stage.regex {
+        expression = "^/var/log/pods/(?P<namespace>[^_]+)_(?P<pod_name>[^_]+)_[^/]+/(?P<container_name>[^/]+)/"
+        source     = "filename"
+      }
+      
+      // Set the extracted values as labels
+      stage.labels {
+        values = {
+          namespace = "",
+          pod = "",
+          container = "",
+        }
+      }
+      
+      // Add static labels
+      stage.static_labels {
+        values = {
+          job = "kubernetes-pods",
+          cluster = "k8s-cluster",
+        }
+      }
+    }
+
+---
+# ---------------- Alloy DaemonSet ----------------
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: alloy
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: alloy
+  template:
+    metadata:
+      labels:
+        app: alloy
+    spec:
+      serviceAccountName: alloy
+      containers:
+        - name: alloy
+          image: grafana/alloy:latest
+          args:
+            - run
+            - /etc/alloy/config.alloy
+            - --server.http.listen-addr=0.0.0.0:12345
+          ports:
+            - containerPort: 12345
+              name: http-metrics
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+              readOnly: true
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: config
+          configMap:
+            name: alloy-config
+        - name: varlog
+          hostPath:
+            path: /var/log
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+
+---
+# ---------------- Alloy Service (for metrics) ----------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: alloy-metrics
+  namespace: observability
+spec:
+  selector:
+    app: alloy
+  ports:
+    - name: http-metrics
+      port: 12345
+      targetPort: 12345
